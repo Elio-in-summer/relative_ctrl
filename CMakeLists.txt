@@ -8,6 +8,7 @@ set(CMAKE_CXX_FLAGS_RELEASE "-O3 -Wall")
 
 find_package(Eigen3 REQUIRED)
 find_package(OpenCV REQUIRED)
+find_package(PythonLibs REQUIRED)
 find_package(catkin REQUIRED COMPONENTS
   roscpp mavros_msgs 
 )
@@ -42,3 +43,8 @@ target_link_libraries(trans_relative_pose ${catkin_LIBRARIES})
 # # Link against required libraries
 # target_link_libraries(rviz_planning ${catkin_LIBRARIES})
 
+#Specify the executables for building 
+add_executable(ikfom_test src/ikfom_test.cpp)
+# Link against required libraries
+target_link_libraries(ikfom_test ${catkin_LIBRARIES} ${PYTHON_LIBRARIES})
+target_include_directories(ikfom_test PRIVATE ${PYTHON_INCLUDE_DIRS})

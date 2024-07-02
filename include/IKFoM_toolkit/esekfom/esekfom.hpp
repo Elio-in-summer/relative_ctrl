@@ -119,11 +119,10 @@ public:
 	typedef Eigen::Matrix<scalar_type, m, n> processMatrix1(state &, const input &);
 	typedef Eigen::Matrix<scalar_type, m, process_noise_dof> processMatrix2(state &, const input &);
 	typedef Eigen::Matrix<scalar_type, process_noise_dof, process_noise_dof> processnoisecovariance;
-	
+
 	typedef measurement measurementModel(state &, bool &);
 	typedef measurement measurementModel_share(state &, share_datastruct<state, measurement, measurement_noise_dof> &);
 	typedef Eigen::Matrix<scalar_type, Eigen::Dynamic, 1> measurementModel_dyn(state &, bool &);
-	typedef void measurementModel_dyn_share_modified(state &,  dyn_share_datastruct<scalar_type> &);
 	typedef Eigen::Matrix<scalar_type, Eigen::Dynamic, 1> measurementModel_dyn_share(state &,  dyn_share_datastruct<scalar_type> &);
 	typedef Eigen::Matrix<scalar_type ,l, n> measurementMatrix1(state &, bool &);
 	typedef Eigen::Matrix<scalar_type , Eigen::Dynamic, n> measurementMatrix1_dyn(state &, bool &);
@@ -133,8 +132,7 @@ public:
 	typedef Eigen::Matrix<scalar_type, Eigen::Dynamic, Eigen::Dynamic> measurementnoisecovariance_dyn;
 
 	esekf(const state &x = state(),
-		const cov  &P = cov::Identity()): x_(x), P_(P){
-	};
+		const cov  &P = cov::Identity()): x_(x), P_(P){};
 
 	//receive system-specific models and their differentions.
 	//for measurement as a manifold.
@@ -230,12 +228,12 @@ public:
 	//receive system-specific models and their differentions
 	//for measurement as an Eigen matrix whose dimension is changing.
 	//calculate  measurement (z), estimate measurement (h), partial differention matrices (h_x, h_v) and the noise covariance (R) at the same time, by only one function (h_dyn_share_in).
-	void init_dyn_share_modified(processModel f_in, processMatrix1 f_x_in, processMatrix2 f_w_in, measurementModel_dyn_share_modified h_dyn_share_in, int maximum_iteration, scalar_type limit_vector[n])
+	void init_dyn_share(processModel f_in, processMatrix1 f_x_in, processMatrix2 f_w_in, measurementModel_dyn_share h_dyn_share_in, int maximum_iteration, scalar_type limit_vector[n])
 	{
 		f = f_in;
 		f_x = f_x_in;
 		f_w = f_w_in;
-		h_dyn_share_modified = h_dyn_share_in;
+		h_dyn_share = h_dyn_share_in;
 
 		maximum_iter = maximum_iteration;
 		for(int i=0; i<n; i++)
@@ -358,7 +356,8 @@ public:
 			}
 			MTK::SO3<scalar_type> res;
 			res.w() = MTK::exp<scalar_type, 3>(res.vec(), seg_SO3, scalar_type(1/2));
-			F_x1.template block<3, 3>(idx, idx) = res.toRotationMatrix();	
+		
+			F_x1.template block<3, 3>(idx, idx) = res.toRotationMatrix();		
 			res_temp_SO3 = MTK::A_matrix(seg_SO3);
 			for(int i = 0; i < n; i++){
 				f_x_final. template block<3, 1>(idx, i) = res_temp_SO3 * (f_x_. template block<3, 1>(dim, i));	
@@ -398,6 +397,7 @@ public:
 				f_w_final. template block<2, 1>(idx, i) = res_temp_S2 * (f_w_. template block<3, 1>(dim, i));
 			}
 		}
+	
 		F_x1 += f_x_final * dt;
 		P_ = (F_x1) * P_ * (F_x1).transpose() + (dt * f_w_final) * Q * (dt * f_w_final).transpose();
 	}
@@ -556,7 +556,7 @@ public:
 					for(int i = 0; i < dof; i++){
 						seg_sen(i) = dx_(idx+i);
 					}
-					x_.Lie_Jacob_Right(seg_sen, jacr);
+					x_.Lie_Jacob_Right(seg_sen, jacr, idx);
 
 					for(int i = 0; i < n; i++){
 						for(int j=0; j<dof; j++)
@@ -862,7 +862,7 @@ public:
 					for(int i = 0; i < dof; i++){
 						seg_sen(i) = dx_(idx+i);
 					}
-					x_.Lie_Jacob_Right(seg_sen, jacr);
+					x_.Lie_Jacob_Right(seg_sen, jacr, idx);
 
 					for(int i = 0; i < n; i++){
 						for(int j=0; j<dof; j++)
@@ -929,7 +929,6 @@ public:
 						// P_. template block<1, 3>(i, idx) = (P_. template block<1, 3>(i, idx)) * jacr.transpose();
 					}
 				}
-
 				Matrix<scalar_type, 3, 3> res_temp_SO3;
 				MTK::vect<3, scalar_type> seg_SO3;
 				for(typename std::vector<std::pair<int, int> >::iterator it = x_.SO3_state.begin(); it != x_.SO3_state.end(); it++) {
@@ -1157,7 +1156,7 @@ public:
 					for(int i = 0; i < dof; i++){
 						seg_sen(i) = dx_(idx+i);
 					}
-					x_.Lie_Jacob_Right(seg_sen, jacr);
+					x_.Lie_Jacob_Right(seg_sen, jacr, idx);
 
 					for(int i = 0; i < n; i++){
 						for(int j=0; j<dof; j++)
@@ -1232,11 +1231,11 @@ public:
 					for(int i = 0; i < 3; i++){
 						seg_SO3(i) = dx_(i + idx);
 					}
-					res_temp_SO3 = A_matrix(seg_SO3).transpose();
+					res_temp_SO3 = MTK::A_matrix(seg_SO3).transpose();
 					for(int i = 0; i < n; i++){
 						L_. template block<3, 1>(idx, i) = res_temp_SO3 * (P_. template block<3, 1>(idx, i)); 
 					}
-					if(n > l)
+					if(n > dof_Measurement)
 					{
 						for(int i = 0; i < dof_Measurement; i++){
 							K_. template block<3, 1>(idx, i) = res_temp_SO3 * (K_. template block<3, 1>(idx, i));
@@ -1272,7 +1271,7 @@ public:
 					for(int i = 0; i < n; i++){
 						L_. template block<2, 1>(idx, i) = res_temp_S2 * (P_. template block<2, 1>(idx, i)); 
 					}
-					if(n > l)
+					if(n > dof_Measurement)
 					{
 						for(int i = 0; i < dof_Measurement; i++){
 							K_. template block<2, 1>(idx, i) = res_temp_S2 * (K_. template block<2, 1>(idx, i));
@@ -1457,7 +1456,7 @@ public:
 					for(int i = 0; i < dof; i++){
 						seg_sen(i) = dx_(idx+i);
 					}
-					x_.Lie_Jacob_Right(seg_sen, jacr);
+					x_.Lie_Jacob_Right(seg_sen, jacr, idx);
 
 					for(int i = 0; i < n; i++){
 						for(int j=0; j<dof; j++)
@@ -1532,11 +1531,11 @@ public:
 					for(int i = 0; i < 3; i++){
 						seg_SO3(i) = dx_(i + idx);
 					}
-					res_temp_SO3 = A_matrix(seg_SO3).transpose();
-					for(int i = 0; i < n; i++){
+					res_temp_SO3 = MTK::A_matrix(seg_SO3).transpose();
+					for(int i = 0; i < int(n); i++){
 						L_. template block<3, 1>(idx, i) = res_temp_SO3 * (P_. template block<3, 1>(idx, i)); 
 					}
-					if(n > l)
+					if(n > dof_Measurement)
 					{
 						for(int i = 0; i < dof_Measurement; i++){
 							K_. template block<3, 1>(idx, i) = res_temp_SO3 * (K_. template block<3, 1>(idx, i));
@@ -1572,7 +1571,7 @@ public:
 					for(int i = 0; i < n; i++){
 						L_. template block<2, 1>(idx, i) = res_temp_S2 * (P_. template block<2, 1>(idx, i)); 
 					}
-					if(n > l)
+					if(n > dof_Measurement)
 					{
 						for(int i = 0; i < dof_Measurement; i++){
 							K_. template block<2, 1>(idx, i) = res_temp_S2 * (K_. template block<2, 1>(idx, i));
@@ -1588,7 +1587,7 @@ public:
 						L_. template block<1, 2>(i, idx) = (L_. template block<1, 2>(i, idx)) * res_temp_S2.transpose();
 						P_. template block<1, 2>(i, idx) = (P_. template block<1, 2>(i, idx)) * res_temp_S2.transpose();
 					}
-				}
+				}		
 				if(n > dof_Measurement)
 				{
 					P_ = L_ - K_*h_x*P_;
@@ -1748,7 +1747,7 @@ public:
 			{
 				L_ = P_;
 				std::cout << "iteration time:" << t << "," << i << std::endl;
-				for (std::vector<std::pair<std::pair<int, int>, int> >::iterator it = x_.SEN_state.begin(); it != x_.SEN_state.end(); it++) {
+			for (std::vector<std::pair<std::pair<int, int>, int> >::iterator it = x_.SEN_state.begin(); it != x_.SEN_state.end(); it++) {
 					int idx = (*it).first.first;
 					int dim = (*it).first.second;
 					int dof = (*it).second;
@@ -1757,7 +1756,7 @@ public:
 					for(int i = 0; i < dof; i++){
 						seg_sen(i) = dx_(idx+i);
 					}
-					x_.Lie_Jacob_Right(seg_sen, jacr);
+					x_.Lie_Jacob_Right(seg_sen, jacr, idx);
 
 					for(int i = 0; i < n; i++){
 						for(int j=0; j<dof; j++)
@@ -1832,11 +1831,11 @@ public:
 					for(int i = 0; i < 3; i++){
 						seg_SO3(i) = dx_(i + idx);
 					}
-					res_temp_SO3 = A_matrix(seg_SO3).transpose();
+					res_temp_SO3 = MTK::A_matrix(seg_SO3).transpose();
 					for(int i = 0; i < n; i++){
 						L_. template block<3, 1>(idx, i) = res_temp_SO3 * (P_. template block<3, 1>(idx, i)); 
 					}
-					if(n > l)
+					if(n > dof_Measurement)
 					{
 						for(int i = 0; i < dof_Measurement; i++){
 							K_. template block<3, 1>(idx, i) = res_temp_SO3 * (K_. template block<3, 1>(idx, i));
@@ -1872,7 +1871,7 @@ public:
 					for(int i = 0; i < n; i++){
 						L_. template block<2, 1>(idx, i) = res_temp_S2 * (P_. template block<2, 1>(idx, i)); 
 					}
-					if(n > l)
+					if(n > dof_Measurement)
 					{
 						for(int i = 0; i < dof_Measurement; i++){
 							K_. template block<2, 1>(idx, i) = res_temp_S2 * (K_. template block<2, 1>(idx, i));
@@ -2052,618 +2051,7 @@ public:
 			{
 				L_ = P_;
 				std::cout << "iteration time:" << t << "," << i << std::endl;
-				for (std::vector<std::pair<std::pair<int, int>, int> >::iterator it = x_.SEN_state.begin(); it != x_.SEN_state.end(); it++) {
-					int idx = (*it).first.first;
-					int dim = (*it).first.second;
-					int dof = (*it).second;
-					VectorXd seg_sen(dof), sen_p(dof), jac_p;
-					MatrixXd jacr;
-					for(int i = 0; i < dof; i++){
-						seg_sen(i) = dx_(idx+i);
-					}
-					x_.Lie_Jacob_Right(seg_sen, jacr);
-
-					for(int i = 0; i < n; i++){
-						for(int j=0; j<dof; j++)
-						{
-							sen_p(j) = P_(idx+j,i);
-						}
-						jac_p = jacr * sen_p;
-						for(int j=0; j<dof; j++)
-						{
-							L_(idx+j,i) = jac_p(j);
-						}
-						// L_. template block<3, 1>(idx, i) = jacr * (P_. template block<3, 1>(idx, i)); 
-					}
-					if(n > l)
-					{
-						for(int i = 0; i < dof_Measurement; i++){
-							for(int j=0; j<dof; j++)
-							{
-								sen_p(j) = K_(idx+j,i);
-							}
-							jac_p = jacr * sen_p;
-							for(int j=0; j<dof; j++)
-							{
-								K_(idx+j,i) = jac_p(j);
-							}
-							// K_. template block<3, 1>(idx, i) = jacr * (K_. template block<3, 1>(idx, i));
-						}
-					}
-					else
-					{
-						for(int i = 0; i < n; i++){
-							for(int j=0; j<dof; j++)
-							{
-								sen_p(j) = K_x(idx+j,i);
-							}
-							jac_p = jacr * sen_p;
-							for(int j=0; j<dof; j++)
-							{
-								K_x(idx+j,i) = jac_p(j);
-							}
-							// K_x. template block<3, 1>(idx, i) = jacr * (K_x. template block<3, 1>(idx, i));
-						}
-					}
-					for(int i = 0; i < n; i++){
-						for(int j=0; j<dof; j++)
-						{
-							sen_p(j) = L_(i,idx+j);
-						}
-						jac_p = jacr * sen_p;
-						for(int j=0; j<dof; j++)
-						{
-							L_(i,idx+j) = jac_p(j);
-						}
-						for(int j=0; j<dof; j++)
-						{
-							sen_p(j) = P_(i,idx+j);
-						}
-						jac_p = jacr * sen_p;
-						for(int j=0; j<dof; j++)
-						{
-							P_(i,idx+j) = jac_p(j);
-						}
-						// L_. template block<1, 3>(i, idx) = (L_. template block<1, 3>(i, idx)) * jacr.transpose();
-						// P_. template block<1, 3>(i, idx) = (P_. template block<1, 3>(i, idx)) * jacr.transpose();
-					}
-				}
-
-				Matrix<scalar_type, 3, 3> res_temp_SO3;
-				MTK::vect<3, scalar_type> seg_SO3;
-				for(typename std::vector<std::pair<int, int> >::iterator it = x_.SO3_state.begin(); it != x_.SO3_state.end(); it++) {
-					int idx = (*it).first;
-					for(int i = 0; i < 3; i++){
-						seg_SO3(i) = dx_(i + idx);
-					}
-					res_temp_SO3 = A_matrix(seg_SO3).transpose();
-					for(int i = 0; i < n; i++){
-						L_. template block<3, 1>(idx, i) = res_temp_SO3 * (P_. template block<3, 1>(idx, i)); 
-					}
-					if(n > l)
-					{
-						for(int i = 0; i < dof_Measurement; i++){
-							K_. template block<3, 1>(idx, i) = res_temp_SO3 * (K_. template block<3, 1>(idx, i));
-						}
-					}
-					else
-					{
-						for(int i = 0; i < n; i++){
-							K_x. template block<3, 1>(idx, i) = res_temp_SO3 * (K_x. template block<3, 1>(idx, i));
-						}
-					}
-					for(int i = 0; i < n; i++){
-						L_. template block<1, 3>(i, idx) = (L_. template block<1, 3>(i, idx)) * res_temp_SO3.transpose();
-						P_. template block<1, 3>(i, idx) = (P_. template block<1, 3>(i, idx)) * res_temp_SO3.transpose();
-					}
-				}
-
-				Matrix<scalar_type, 2, 2> res_temp_S2;
-				MTK::vect<2, scalar_type> seg_S2;
-				for(typename std::vector<std::pair<int, int> >::iterator it = x_.S2_state.begin(); it != x_.S2_state.end(); it++) {
-					int idx = (*it).first;
-			
-					for(int i = 0; i < 2; i++){
-						seg_S2(i) = dx_(i + idx);
-					}
-			
-					Eigen::Matrix<scalar_type, 2, 3> Nx;
-					Eigen::Matrix<scalar_type, 3, 2> Mx;
-					x_.S2_Nx_yy(Nx, idx);
-					x_propagated.S2_Mx(Mx, seg_S2, idx);
-					res_temp_S2 = Nx * Mx; 
-		
-					for(int i = 0; i < n; i++){
-						L_. template block<2, 1>(idx, i) = res_temp_S2 * (P_. template block<2, 1>(idx, i)); 
-					}
-					if(n > l)
-					{
-						for(int i = 0; i < dof_Measurement; i++){
-							K_. template block<2, 1>(idx, i) = res_temp_S2 * (K_. template block<2, 1>(idx, i));
-						}
-					}
-					else
-					{
-						for(int i = 0; i < n; i++){
-							K_x. template block<2, 1>(idx, i) = res_temp_S2 * (K_x. template block<2, 1>(idx, i));
-						}
-					}
-					for(int i = 0; i < n; i++){
-						L_. template block<1, 2>(i, idx) = (L_. template block<1, 2>(i, idx)) * res_temp_S2.transpose();
-						P_. template block<1, 2>(i, idx) = (P_. template block<1, 2>(i, idx)) * res_temp_S2.transpose();
-					}
-				}
-				if(n > dof_Measurement)
-				{
-					P_ = L_ - K_*h_x * P_;
-				}
-				else
-				{
-					P_ = L_ - K_x * P_;
-				}
-				return;
-			}
-		}
-	}
-	
-	//iterated error state EKF update modified for one specific system.
-	void update_iterated_dyn_share_modified(double R) {
-		
-		dyn_share_datastruct<scalar_type> dyn_share;
-		dyn_share.valid = true;
-		dyn_share.converge = true;
-		int t = 0;
-		state x_propagated = x_;
-		cov P_propagated = P_;
-		int dof_Measurement; 
-		vectorized_state dx_new = vectorized_state::Zero();
-		for(int i=0; i<maximum_iter; i++)
-		{
-			dyn_share.valid = true;	
-			Matrix<scalar_type, Eigen::Dynamic, 1> h = h_dyn_share_modified(x_, dyn_share);
-			Eigen::Matrix<scalar_type, Eigen::Dynamic, Eigen::Dynamic> h_x_ = dyn_share.h_x;
-			dof_Measurement = h.rows();
-			vectorized_state dx;
-			x_.boxminus(dx, x_propagated);
-			dx_new = dx;
-			
-			if(! dyn_share.valid)
-			{
-				continue; 
-			}
-			
-			P_ = P_propagated;
-			
-			for (std::vector<std::pair<std::pair<int, int>, int> >::iterator it = x_.SEN_state.begin(); it != x_.SEN_state.end(); it++) {
-				int idx = (*it).first.first;
-				int dim = (*it).first.second;
-				int dof = (*it).second;
-				VectorXd seg_sen, jac_sen, sen_p, jac_p;
-				MatrixXd jacr;
-				seg_sen.resize(dof);
-				sen_p.resize(dof);
-				for(int i = 0; i < dof; i++){
-					seg_sen(i) = dx(idx+i);
-				}
-
-				x_.Lie_Jacob_Right(seg_sen, jacr, idx);
-				jac_sen = jacr * seg_sen;
-				for(int i=0; i<dof; i++)
-				{
-					dx_new(idx+i) = jac_sen(i);
-				}
-				for(int i = 0; i < n; i++){
-					for(int j=0; j<dof; j++)
-					{
-						sen_p(j) = P_(idx+j,i);
-					}
-					jac_p = jacr * sen_p;
-					for(int j=0; j<dof; j++)
-					{
-						P_(idx+j,i) = jac_p(j);
-					}
-					// P_. template block<3, 1>(idx, i) = jacr * (P_. template block<3, 1>(idx, i));	
-				}
-				for(int i = 0; i < n; i++){
-					for(int j=0; j<dof; j++)
-					{
-						sen_p(j) = P_(i,idx+j);
-					}
-					jac_p = jacr * sen_p;
-					for(int j=0; j<dof; j++)
-					{
-						P_(i,idx+j) = jac_p(j);
-					}
-					// P_. template block<1, 3>(i, idx) =(P_. template block<1, 3>(i, idx)) *  jacr.transpose();	
-				}
-			}
-
-			Matrix<scalar_type, 3, 3> res_temp_SO3;
-			MTK::vect<3, scalar_type> seg_SO3;
-			for (std::vector<std::pair<int, int> >::iterator it = x_.SO3_state.begin(); it != x_.SO3_state.end(); it++) {
-				int idx = (*it).first;
-				int dim = (*it).second;
-				for(int i = 0; i < 3; i++){
-					seg_SO3(i) = dx(idx+i);
-				}
-
-				res_temp_SO3 = MTK::A_matrix(seg_SO3).transpose();
-				dx_new.template block<3, 1>(idx, 0) = res_temp_SO3 * dx_new.template block<3, 1>(idx, 0);
-				for(int i = 0; i < n; i++){
-					P_. template block<3, 1>(idx, i) = res_temp_SO3 * (P_. template block<3, 1>(idx, i));	
-				}
-				for(int i = 0; i < n; i++){
-					P_. template block<1, 3>(i, idx) =(P_. template block<1, 3>(i, idx)) *  res_temp_SO3.transpose();	
-				}
-			}
-
-			Matrix<scalar_type, 2, 2> res_temp_S2;
-			MTK::vect<2, scalar_type> seg_S2;
-			for (std::vector<std::pair<int, int> >::iterator it = x_.S2_state.begin(); it != x_.S2_state.end(); it++) {
-				int idx = (*it).first;
-				int dim = (*it).second;
-				for(int i = 0; i < 2; i++){
-					seg_S2(i) = dx(idx + i);
-				}
-
-				Eigen::Matrix<scalar_type, 2, 3> Nx;
-				Eigen::Matrix<scalar_type, 3, 2> Mx;
-				x_.S2_Nx_yy(Nx, idx);
-				x_propagated.S2_Mx(Mx, seg_S2, idx);
-				res_temp_S2 = Nx * Mx; 
-				dx_new.template block<2, 1>(idx, 0) = res_temp_S2 * dx_new.template block<2, 1>(idx, 0);
-				for(int i = 0; i < n; i++){
-					P_. template block<2, 1>(idx, i) = res_temp_S2 * (P_. template block<2, 1>(idx, i));	
-				}
-				for(int i = 0; i < n; i++){
-					P_. template block<1, 2>(i, idx) = (P_. template block<1, 2>(i, idx)) * res_temp_S2.transpose();
-				}
-			}
-			Matrix<scalar_type, Eigen::Dynamic, Eigen::Dynamic> K_;
-			Matrix<scalar_type, Eigen::Dynamic, Eigen::Dynamic> K_x; 
-			
-			if(n > dof_Measurement)
-			{
-				K_= P_ * h_x_.transpose() * (h_x_ * P_ * h_x_.transpose()/R + Eigen::Matrix<double, Dynamic, Dynamic>::Identity(dof_Measurement, dof_Measurement)).inverse()/R;
-			}
-			else
-			{
-				K_= (h_x_.transpose() * h_x_ + (P_/R).inverse()).inverse()*h_x_.transpose();
-			}
-			K_x = K_ * h_x_;
-			Matrix<scalar_type, n, 1> dx_ = K_ * h + (K_x - Matrix<scalar_type, n, n>::Identity()) * dx_new; 
-			state x_before = x_;
-			x_.boxplus(dx_);
-			dyn_share.converge = true;
-			for(int i = 0; i < n ; i++)
-			{
-				if(std::fabs(dx_[i]) > limit[i])
-				{
-					dyn_share.converge = false;
-					break;
-				}
-			}
-			if(dyn_share.converge) t++;
-
-			if(t > 1 || i == maximum_iter - 1)
-			{
-				L_ = P_;
-				std::cout << "iteration time" << t << "," << i << std::endl; 
-				for (std::vector<std::pair<std::pair<int, int>, int> >::iterator it = x_.SEN_state.begin(); it != x_.SEN_state.end(); it++) {
-					int idx = (*it).first.first;
-					int dim = (*it).first.second;
-					int dof = (*it).second;
-					VectorXd seg_sen(dof), sen_p(dof), jac_p;
-					MatrixXd jacr;
-					for(int i = 0; i < dof; i++){
-						seg_sen(i) = dx_(idx+i);
-					}
-					x_.Lie_Jacob_Right(seg_sen, jacr);
-
-					for(int i = 0; i < n; i++){
-						for(int j=0; j<dof; j++)
-						{
-							sen_p(j) = P_(idx+j,i);
-						}
-						jac_p = jacr * sen_p;
-						for(int j=0; j<dof; j++)
-						{
-							L_(idx+j,i) = jac_p(j);
-						}
-						// L_. template block<3, 1>(idx, i) = jacr * (P_. template block<3, 1>(idx, i)); 
-					}
-					if(n > l)
-					{
-						for(int i = 0; i < dof_Measurement; i++){
-							for(int j=0; j<dof; j++)
-							{
-								sen_p(j) = K_(idx+j,i);
-							}
-							jac_p = jacr * sen_p;
-							for(int j=0; j<dof; j++)
-							{
-								K_(idx+j,i) = jac_p(j);
-							}
-							// K_. template block<3, 1>(idx, i) = jacr * (K_. template block<3, 1>(idx, i));
-						}
-					}
-					else
-					{
-						for(int i = 0; i < n; i++){
-							for(int j=0; j<dof; j++)
-							{
-								sen_p(j) = K_x(idx+j,i);
-							}
-							jac_p = jacr * sen_p;
-							for(int j=0; j<dof; j++)
-							{
-								K_x(idx+j,i) = jac_p(j);
-							}
-							// K_x. template block<3, 1>(idx, i) = jacr * (K_x. template block<3, 1>(idx, i));
-						}
-					}
-					for(int i = 0; i < n; i++){
-						for(int j=0; j<dof; j++)
-						{
-							sen_p(j) = L_(i,idx+j);
-						}
-						jac_p = jacr * sen_p;
-						for(int j=0; j<dof; j++)
-						{
-							L_(i,idx+j) = jac_p(j);
-						}
-						for(int j=0; j<dof; j++)
-						{
-							sen_p(j) = P_(i,idx+j);
-						}
-						jac_p = jacr * sen_p;
-						for(int j=0; j<dof; j++)
-						{
-							P_(i,idx+j) = jac_p(j);
-						}
-						// L_. template block<1, 3>(i, idx) = (L_. template block<1, 3>(i, idx)) * jacr.transpose();
-						// P_. template block<1, 3>(i, idx) = (P_. template block<1, 3>(i, idx)) * jacr.transpose();
-					}
-				}
-
-				Matrix<scalar_type, 3, 3> res_temp_SO3;
-				MTK::vect<3, scalar_type> seg_SO3;
-				for(typename std::vector<std::pair<int, int> >::iterator it = x_.SO3_state.begin(); it != x_.SO3_state.end(); it++) {
-					int idx = (*it).first;
-					for(int i = 0; i < 3; i++){
-						seg_SO3(i) = dx_(i + idx);
-					}
-					res_temp_SO3 = A_matrix(seg_SO3).transpose();
-					for(int i = 0; i < n; i++){
-						L_. template block<3, 1>(idx, i) = res_temp_SO3 * (P_. template block<3, 1>(idx, i)); 
-					}
-					if(n > l)
-					{
-						for(int i = 0; i < dof_Measurement; i++){
-							K_. template block<3, 1>(idx, i) = res_temp_SO3 * (K_. template block<3, 1>(idx, i));
-						}
-					}
-					else
-					{
-						for(int i = 0; i < n; i++){
-							K_x. template block<3, 1>(idx, i) = res_temp_SO3 * (K_x. template block<3, 1>(idx, i));
-						}
-					}
-					for(int i = 0; i < n; i++){
-						L_. template block<1, 3>(i, idx) = (L_. template block<1, 3>(i, idx)) * res_temp_SO3.transpose();
-						P_. template block<1, 3>(i, idx) = (P_. template block<1, 3>(i, idx)) * res_temp_SO3.transpose();
-					}
-				}
-
-				Matrix<scalar_type, 2, 2> res_temp_S2;
-				MTK::vect<2, scalar_type> seg_S2;
-				for(typename std::vector<std::pair<int, int> >::iterator it = x_.S2_state.begin(); it != x_.S2_state.end(); it++) {
-					int idx = (*it).first;
-			
-					for(int i = 0; i < 2; i++){
-						seg_S2(i) = dx_(i + idx);
-					}
-			
-					Eigen::Matrix<scalar_type, 2, 3> Nx;
-					Eigen::Matrix<scalar_type, 3, 2> Mx;
-					x_.S2_Nx_yy(Nx, idx);
-					x_propagated.S2_Mx(Mx, seg_S2, idx);
-					res_temp_S2 = Nx * Mx; 
-		
-					for(int i = 0; i < n; i++){
-						L_. template block<2, 1>(idx, i) = res_temp_S2 * (P_. template block<2, 1>(idx, i)); 
-					}
-					if(n > l)
-					{
-						for(int i = 0; i < dof_Measurement; i++){
-							K_. template block<2, 1>(idx, i) = res_temp_S2 * (K_. template block<2, 1>(idx, i));
-						}
-					}
-					else
-					{
-						for(int i = 0; i < n; i++){
-							K_x. template block<2, 1>(idx, i) = res_temp_S2 * (K_x. template block<2, 1>(idx, i));
-						}
-					}
-					for(int i = 0; i < n; i++){
-						L_. template block<1, 2>(i, idx) = (L_. template block<1, 2>(i, idx)) * res_temp_S2.transpose();
-						P_. template block<1, 2>(i, idx) = (P_. template block<1, 2>(i, idx)) * res_temp_S2.transpose();
-					}
-				}
-				if(n > dof_Measurement)
-				{
-					P_ = L_ - K_*h_x_ * P_;
-				}
-				else
-				{
-					P_ = L_ - K_x * P_;
-				}
-				return;
-			}
-		}
-	}
-
-	void update_iterated_dyn_share_modified_extrinsic(double R){
-		
-		dyn_share_datastruct<scalar_type> dyn_share;
-		dyn_share.valid = true;
-		dyn_share.converge = true;
-		int t = 0;
-		state x_propagated = x_;
-		cov P_propagated = P_;
-		int dof_Measurement; 
-		
-		Matrix<scalar_type, n, 1> K_h;
-		Matrix<scalar_type, n, n> K_x; 
-		
-		vectorized_state dx_new = vectorized_state::Zero();
-		for(int i=0; i<maximum_iter; i++)
-		{
-			dyn_share.valid = true;	
-			h_dyn_share_modified(x_, dyn_share);
-			Eigen::Matrix<scalar_type, Eigen::Dynamic, 12> h_x_ = dyn_share.h_x;
-			dof_Measurement = h_x_.rows();
-			vectorized_state dx;
-			x_.boxminus(dx, x_propagated);
-			dx_new = dx;
-			
-			if(! dyn_share.valid)
-			{
-				continue; 
-			}
-			
-			P_ = P_propagated;
-			
-			for (std::vector<std::pair<std::pair<int, int>, int> >::iterator it = x_.SEN_state.begin(); it != x_.SEN_state.end(); it++) {
-				int idx = (*it).first.first;
-				int dim = (*it).first.second;
-				int dof = (*it).second;
-				VectorXd seg_sen, jac_sen, sen_p, jac_p;
-				MatrixXd jacr;
-				seg_sen.resize(dof);
-				sen_p.resize(dof);
-				for(int i = 0; i < dof; i++){
-					seg_sen(i) = dx(idx+i);
-				}
-
-				x_.Lie_Jacob_Right(seg_sen, jacr, idx);
-				jac_sen = jacr * seg_sen;
-				for(int i=0; i<dof; i++)
-				{
-					dx_new(idx+i) = jac_sen(i);
-				}
-				for(int i = 0; i < n; i++){
-					for(int j=0; j<dof; j++)
-					{
-						sen_p(j) = P_(idx+j,i);
-					}
-					jac_p = jacr * sen_p;
-					for(int j=0; j<dof; j++)
-					{
-						P_(idx+j,i) = jac_p(j);
-					}
-					// P_. template block<3, 1>(idx, i) = jacr * (P_. template block<3, 1>(idx, i));	
-				}
-				for(int i = 0; i < n; i++){
-					for(int j=0; j<dof; j++)
-					{
-						sen_p(j) = P_(i,idx+j);
-					}
-					jac_p = jacr * sen_p;
-					for(int j=0; j<dof; j++)
-					{
-						P_(i,idx+j) = jac_p(j);
-					}
-					// P_. template block<1, 3>(i, idx) =(P_. template block<1, 3>(i, idx)) *  jacr.transpose();	
-				}
-			}
-
-			Matrix<scalar_type, 3, 3> res_temp_SO3;
-			MTK::vect<3, scalar_type> seg_SO3;
-			for (std::vector<std::pair<int, int> >::iterator it = x_.SO3_state.begin(); it != x_.SO3_state.end(); it++) {
-				int idx = (*it).first;
-				int dim = (*it).second;
-				for(int i = 0; i < 3; i++){
-					seg_SO3(i) = dx(idx+i);
-				}
-
-				res_temp_SO3 = MTK::A_matrix(seg_SO3).transpose();
-				dx_new.template block<3, 1>(idx, 0) = res_temp_SO3 * dx_new.template block<3, 1>(idx, 0);
-				for(int i = 0; i < n; i++){
-					P_. template block<3, 1>(idx, i) = res_temp_SO3 * (P_. template block<3, 1>(idx, i));	
-				}
-				for(int i = 0; i < n; i++){
-					P_. template block<1, 3>(i, idx) =(P_. template block<1, 3>(i, idx)) *  res_temp_SO3.transpose();	
-				}
-			}
-
-			Matrix<scalar_type, 2, 2> res_temp_S2;
-			MTK::vect<2, scalar_type> seg_S2;
-			for (std::vector<std::pair<int, int> >::iterator it = x_.S2_state.begin(); it != x_.S2_state.end(); it++) {
-				int idx = (*it).first;
-				int dim = (*it).second;
-				for(int i = 0; i < 2; i++){
-					seg_S2(i) = dx(idx + i);
-				}
-
-				Eigen::Matrix<scalar_type, 2, 3> Nx;
-				Eigen::Matrix<scalar_type, 3, 2> Mx;
-				x_.S2_Nx_yy(Nx, idx);
-				x_propagated.S2_Mx(Mx, seg_S2, idx);
-				res_temp_S2 = Nx * Mx; 
-				dx_new.template block<2, 1>(idx, 0) = res_temp_S2 * dx_new.template block<2, 1>(idx, 0);
-				for(int i = 0; i < n; i++){
-					P_. template block<2, 1>(idx, i) = res_temp_S2 * (P_. template block<2, 1>(idx, i));	
-				}
-				for(int i = 0; i < n; i++){
-					P_. template block<1, 2>(i, idx) = (P_. template block<1, 2>(i, idx)) * res_temp_S2.transpose();
-				}
-			}
-			Matrix<scalar_type, Eigen::Dynamic, Eigen::Dynamic> K_;
-			if(n > dof_Measurement)
-			{
-				Eigen::Matrix<scalar_type, Eigen::Dynamic, Eigen::Dynamic> h_x_cur = Eigen::Matrix<scalar_type, Eigen::Dynamic, Eigen::Dynamic>::Zero(dof_Measurement, n);
-				h_x_cur.topLeftCorner(dof_Measurement, 12) = h_x_;
 				
-				K_ = P_ * h_x_cur.transpose() * (h_x_cur * P_ * h_x_cur.transpose()/R + Eigen::Matrix<double, Dynamic, Dynamic>::Identity(dof_Measurement, dof_Measurement)).inverse()/R;
-				K_h = K_ * dyn_share.h;
-				K_x = K_ * h_x_cur;
-			
-			}
-			else
-			{
-				cov P_temp = (P_/R).inverse();
-				Eigen::Matrix<scalar_type, 12, 12> HTH = h_x_.transpose() * h_x_; 
-				P_temp. template block<12, 12>(0, 0) += HTH;
-				
-				cov P_inv = P_temp.inverse();
-				K_h = P_inv. template block<n, 12>(0, 0) * h_x_.transpose() * dyn_share.h;
-				K_x.setZero(); // = cov::Zero();
-				K_x. template block<n, 12>(0, 0) = P_inv. template block<n, 12>(0, 0) * HTH;
-			}
-
-			Matrix<scalar_type, n, 1> dx_ = K_h + (K_x - Matrix<scalar_type, n, n>::Identity()) * dx_new; 
-			state x_before = x_;
-			x_.boxplus(dx_);
-			dyn_share.converge = true;
-			for(int i = 0; i < n ; i++)
-			{
-				if(std::fabs(dx_[i]) > limit[i])
-				{
-					dyn_share.converge = false;
-					break;
-				}
-			}
-			if(dyn_share.converge) t++;
-			
-			if(!t && i == maximum_iter - 2)
-			{
-				dyn_share.converge = true;
-			}
-
-			if(t > 1 || i == maximum_iter - 1)
-			{
-				L_ = P_;
 				for (std::vector<std::pair<std::pair<int, int>, int> >::iterator it = x_.SEN_state.begin(); it != x_.SEN_state.end(); it++) {
 					int idx = (*it).first.first;
 					int dim = (*it).first.second;
@@ -2748,11 +2136,11 @@ public:
 					for(int i = 0; i < 3; i++){
 						seg_SO3(i) = dx_(i + idx);
 					}
-					res_temp_SO3 = A_matrix(seg_SO3).transpose();
-					for(int i = 0; i < n; i++){
+					res_temp_SO3 = MTK::A_matrix(seg_SO3).transpose();
+					for(int i = 0; i < int(n); i++){
 						L_. template block<3, 1>(idx, i) = res_temp_SO3 * (P_. template block<3, 1>(idx, i)); 
 					}
-					if(n > l)
+					if(n > dof_Measurement)
 					{
 						for(int i = 0; i < dof_Measurement; i++){
 							K_. template block<3, 1>(idx, i) = res_temp_SO3 * (K_. template block<3, 1>(idx, i));
@@ -2788,7 +2176,7 @@ public:
 					for(int i = 0; i < n; i++){
 						L_. template block<2, 1>(idx, i) = res_temp_S2 * (P_. template block<2, 1>(idx, i)); 
 					}
-					if(n > l)
+					if(n > dof_Measurement)
 					{
 						for(int i = 0; i < dof_Measurement; i++){
 							K_. template block<2, 1>(idx, i) = res_temp_S2 * (K_. template block<2, 1>(idx, i));
@@ -2805,7 +2193,14 @@ public:
 						P_. template block<1, 2>(i, idx) = (P_. template block<1, 2>(i, idx)) * res_temp_S2.transpose();
 					}
 				}
-				P_ = L_ - K_x.template block<n, 12>(0, 0) * P_.template block<12, n>(0, 0);
+				if(n > dof_Measurement)
+				{
+					P_ = L_ - K_*h_x * P_;
+				}
+				else
+				{
+					P_ = L_ - K_x * P_;
+				}
 				return;
 			}
 		}
@@ -2870,7 +2265,6 @@ private:
 
 	measurementModel_share *h_share;
 	measurementModel_dyn_share *h_dyn_share;
-	measurementModel_dyn_share_modified *h_dyn_share_modified;
 
 	int maximum_iter = 0;
 	scalar_type limit[n];

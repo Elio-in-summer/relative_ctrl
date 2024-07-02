@@ -31,119 +31,127 @@
  *  ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
  *  POSSIBILITY OF SUCH DAMAGE.
  */
-#ifndef USE_IKFOM_H
-#define USE_IKFOM_H
+
+#ifndef USE_IKFOM_UAV_H
+#define USE_IKFOM_UAV_H
 
 #include <IKFoM_toolkit/esekfom/esekfom.hpp>
 
-// ! Select and instantiate the primitive manifolds:
 typedef MTK::vect<3, double> vect3;
 typedef MTK::SO3<double> SO3;
 typedef MTK::S2<double, 98099, 10000, 1> S2; 
 typedef MTK::vect<1, double> vect1;
 typedef MTK::vect<2, double> vect2;
 
-//! the state length is not necessary to be the same as the state_ikfom::DOF
-//! state length is the length of f, which obeys x \oplus f rule
-//! state dof is the length of \delta x, which obeys x \boxplus \delta x rule
-//! for example, for S2, the state length is 3, but the state dof is 2
-#define state_length 6
-
-// ! Build system state, input and measurement 
-// ! as compound manifolds which are composed of the primitive manifolds:
 MTK_BUILD_MANIFOLD(state_ikfom,
-((vect3, pos))
+((vect3, pos)) 
+((SO3, rot))
 ((vect3, vel))
+((vect3, bg))
+((vect3, ba))
+((S2, grav))
 );
 
 MTK_BUILD_MANIFOLD(input_ikfom,
 ((vect3, acc))
+((vect3, gyro))
 );
 
 MTK_BUILD_MANIFOLD(process_noise_ikfom,
-((vect3, w_a))
+((vect3, ng))
+((vect3, na))
+((vect3, nbg))
+((vect3, nba))
 );
 
 MTK_BUILD_MANIFOLD(measurement_ikfom,
-((vect3, position))
+((vect3, pos_h))
+((SO3, rot_h))
 );
 
+MTK::get_cov<process_noise_ikfom>::type process_noise_cov()
+{	
+	MTK::get_cov<process_noise_ikfom>::type cov = MTK::get_cov<process_noise_ikfom>::type::Zero();
+	MTK::setDiagonal<process_noise_ikfom, vect3, 0>(cov, &process_noise_ikfom::ng, 0.0001);// 0.03
+	MTK::setDiagonal<process_noise_ikfom, vect3, 3>(cov, &process_noise_ikfom::na, 0.0001); // *dt 0.01 0.01 * dt * dt 0.05
+	MTK::setDiagonal<process_noise_ikfom, vect3, 6>(cov, &process_noise_ikfom::nbg, 0.003); // *dt 0.00001 0.00001 * dt *dt 0.3 //0.001 0.0001 0.01
+	MTK::setDiagonal<process_noise_ikfom, vect3, 9>(cov, &process_noise_ikfom::nba, 0.003);   //0.001 0.05 0.0001/out 0.01
+	return cov;
+}
 
-// ! Implement the vector field and its differentiation
-//double L_offset_to_I[3] = {0.04165, 0.02326, -0.0284}; // Avia 
-//vect3 Lidar_offset_to_IMU(L_offset_to_I, 3);
-Eigen::Matrix<double, state_length, 1> get_f(state_ikfom &s, const input_ikfom &in)
+
+Eigen::Matrix<double, 17, 1> get_f(state_ikfom &s, const input_ikfom &in)
 {
-	Eigen::Matrix<double, state_length, 1> res = Eigen::Matrix<double, state_length, 1>::Zero(); 
-	res(0) = s.vel[0];
-	res(1) = s.vel[1];
-	res(2) = s.vel[2];
-	res(3) = in.acc[0];
-	res(4) = in.acc[1];
-	res(5) = in.acc[2];
+	Eigen::Matrix<double, 17, 1> res = Eigen::Matrix<double, 17, 1>::Zero();
+	vect3 omega;
+	in.gyro.boxminus(omega, s.bg); // omega = gyro - bias
+	vect3 a_inertial = s.rot * (in.acc-s.ba); 
+	for(int i = 0; i < 3; i++ ){
+		res(i) = s.vel[i];
+		res(i + 3) =  omega[i]; 
+		res(i + 6) = a_inertial[i] + s.grav[i]; 
+	}
 	return res;
 }
 
-Eigen::Matrix<double, state_length, state_ikfom::DOF> df_dx(state_ikfom &s, const input_ikfom &in)
+Eigen::Matrix<double, 17, 17> df_dx(state_ikfom &s, const input_ikfom &in)
 {
-	Eigen::Matrix<double, state_length, state_ikfom::DOF> cov = Eigen::Matrix<double, state_length, state_ikfom::DOF>::Zero();
-	// df_dx = [0,I;0,0]
-	cov.template block<3, 3>(3, 0) = Eigen::Matrix3d::Identity(); 
+	Eigen::Matrix<double, 17, 17> cov = Eigen::Matrix<double, 17, 17>::Zero();
+	cov.template block<3, 3>(0, 6) = Eigen::Matrix3d::Identity();
+	vect3 acc_;
+	in.acc.boxminus(acc_, s.ba);
+	vect3 omega;
+	in.gyro.boxminus(omega, s.bg);
+	cov.template block<3, 3>(6, 3) = -s.rot.toRotationMatrix()*MTK::hat(acc_);
+	cov.template block<3, 3>(6, 12) = -s.rot.toRotationMatrix();
+	Eigen::Matrix<state_ikfom::scalar, 2, 1> vec = Eigen::Matrix<state_ikfom::scalar, 2, 1>::Zero();
+	Eigen::Matrix<state_ikfom::scalar, 3, 2> grav_matrix;
+	s.S2_Mx(grav_matrix, vec, 15); // here 15 is the beginning index of grav
+	cov.template block<3, 2>(6, 15) =  grav_matrix; 
+	cov.template block<3, 3>(3, 9) = -Eigen::Matrix3d::Identity(); 
 	return cov;
 }
 
 
-Eigen::Matrix<double, state_length, process_noise_ikfom::DOF> df_dw(state_ikfom &s, const input_ikfom &in)
+Eigen::Matrix<double, 17, 12> df_dw(state_ikfom &s, const input_ikfom &in)
 {
-	Eigen::Matrix<double, state_length, process_noise_ikfom::DOF> cov = Eigen::Matrix<double, state_length, process_noise_ikfom::DOF>::Zero();
-	// df_dw = [0;I]
-	cov.template block<3, 3>(3, 0) = Eigen::Matrix3d::Identity();
+	Eigen::Matrix<double, 17, 12> cov = Eigen::Matrix<double, 17, 12>::Zero();
+	cov.template block<3, 3>(6, 3) = -s.rot.toRotationMatrix();
+	cov.template block<3, 3>(3, 0) = -Eigen::Matrix3d::Identity();
+	cov.template block<3, 3>(9, 6) = Eigen::Matrix3d::Identity();
+	cov.template block<3, 3>(12, 9) = Eigen::Matrix3d::Identity();
 	return cov;
-}
-
-measurement_ikfom h_share(state_ikfom &s, esekfom::share_datastruct<state_ikfom, measurement_ikfom> &share_data) 
-{
-	if(share_data.converge) {} // this value is true means iteration is converged 
-	if(false) share_data.valid = false; // the iteration stops before convergence when this value is false if other conditions are satified
-	share_data.h_x.setZero(); // h_x is the result of the measurement function
-	// h_x = [I,0]
-	share_data.h_x.template block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
-	share_data.h_v.setZero(); // h_v is the Jacobian of the measurement function
-	// h_v = -I
-	share_data.h_v.template block<3, 3>(0, 0) = -Eigen::Matrix3d::Identity();
-	share_data.R = Eigen::Matrix3d::Identity() * 0.1; // R is the covariance of the measurement noise
-	// share_data.z = z; // z is the obtained measurement 
-
-	measurement_ikfom h_;
-	h_.position = s.pos;
-	return h_;
 }
 
 measurement_ikfom h(state_ikfom &s, bool &valid) // the iteration stops before convergence whenever the user set valid as false
 {
 	if (false){ valid = false; } // other conditions could be used to stop the ekf update iteration before convergence, otherwise the iteration will not stop until the condition of convergence is satisfied.
 	measurement_ikfom h_;
-	h_.position = s.pos;
+	h_.pos_h = s.pos;
+	h_.rot_h = s.rot;
 	return h_;
 }
 
-Eigen::Matrix<double, measurement_ikfom::DOF, state_ikfom::DOF> dh_dx(state_ikfom &s, bool &valid) 
+Eigen::Matrix<double, 6, 17> dh_dx(state_ikfom &s, bool &valid) 
 {
 	if (false){ valid = false; } // other conditions could be used to stop the ekf update iteration before convergence, otherwise the iteration will not stop until the condition of convergence is satisfied.
-	Eigen::Matrix<double, measurement_ikfom::DOF, state_ikfom::DOF> cov = Eigen::Matrix<double, measurement_ikfom::DOF, state_ikfom::DOF>::Zero();
+	Eigen::Matrix<double, 6, 17> cov = Eigen::Matrix<double, 6, 17>::Zero();
 	// dh_dx = [I,0]
 	cov.template block<3, 3>(0, 0) = Eigen::Matrix3d::Identity();
+	cov.template block<3, 3>(3, 3) = Eigen::Matrix3d::Identity();
 	return cov;
 } 
 
-Eigen::Matrix<double, measurement_ikfom::DOF, measurement_ikfom::DOF> dh_dv(state_ikfom &s, bool &valid) 
+Eigen::Matrix<double, 6, 6> dh_dv(state_ikfom &s, bool &valid) 
 {
 	if (false){ valid = false; } // other conditions could be used to stop the ekf update iteration before convergence, otherwise the iteration will not stop until the condition of convergence is satisfied.
-	Eigen::Matrix<double, measurement_ikfom::DOF, measurement_ikfom::DOF> cov = Eigen::Matrix<double, measurement_ikfom::DOF, measurement_ikfom::DOF>::Zero();
+	Eigen::Matrix<double, 6, 6> cov = Eigen::Matrix<double, 6, 6>::Zero();
 	// dh_dv = -I
 	cov.template block<3, 3>(0, 0) = -Eigen::Matrix3d::Identity();
+	cov.template block<3, 3>(3, 3) = -Eigen::Matrix3d::Identity();
 	return cov;
 }
+
 
 vect3 SO3ToEuler(const SO3 &orient) 
 {
