@@ -48,3 +48,9 @@ add_executable(ikfom_test src/ikfom_test.cpp)
 # Link against required libraries
 target_link_libraries(ikfom_test ${catkin_LIBRARIES} ${PYTHON_LIBRARIES})
 target_include_directories(ikfom_test PRIVATE ${PYTHON_INCLUDE_DIRS})
+
+#Specify the executables for building 
+add_executable(ikfom_uav_test src/ikfom_uav_test.cpp)
+# Link against required libraries
+target_link_libraries(ikfom_uav_test ${catkin_LIBRARIES} ${PYTHON_LIBRARIES})
+target_include_directories(ikfom_uav_test PRIVATE ${PYTHON_INCLUDE_DIRS})

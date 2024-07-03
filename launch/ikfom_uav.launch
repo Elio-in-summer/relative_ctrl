@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<launch>
+  
+  <node pkg="relative_ctrl" type="ikfom_uav_test" name="ikfom_uav_test" output="screen">
+    <remap from="/odom" to = "/mavros/vision_pose/odom"/>
+    <remap from="/imu" to = "/mavros/imu/data"/>
+  </node>
+
+</launch>
