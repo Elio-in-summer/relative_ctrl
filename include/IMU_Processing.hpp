@@ -18,6 +18,7 @@
 #include <sensor_msgs/Imu.h>
 #include <sensor_msgs/PointCloud2.h>
 #include <geometry_msgs/Vector3.h>
+#include <chrono>
 
 #include <use-ikfom-uav.hpp>
 #include <so3_math.h>
@@ -29,8 +30,9 @@
 #define DIM_OF_PROC_N 12
 
 struct MeasureGroup {
-    std::deque<sensor_msgs::Imu::Ptr> imu;
+    std::deque<sensor_msgs::Imu::ConstPtr> imu;
     nav_msgs::Odometry::ConstPtr odom;
+    double last_odom_time;
 };
 
 /// *************IMU Process and undistortion
@@ -43,13 +45,13 @@ class ImuProcess
   ~ImuProcess();
 
   Eigen::Matrix<double, 12, 12> Q = process_noise_cov();
-  void Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI::Ptr pcl_un_);
+  void Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, process_noise_ikfom::DOF, input_ikfom, measurement_ikfom, measurement_ikfom::DOF> &kf_state);
 
   void Reset();
   
-  void IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N);
+  void IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, process_noise_ikfom::DOF, input_ikfom, measurement_ikfom, measurement_ikfom::DOF> &kf_state, int &N);
 
-  void ForwardPredict(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI &pcl_in_out);
+  void ForwardPredict(const MeasureGroup &meas, esekfom::esekf<state_ikfom, process_noise_ikfom::DOF, input_ikfom, measurement_ikfom, measurement_ikfom::DOF> &kf_state);
   // Eigen::Matrix3d Exp(const Eigen::Vector3d &ang_vel, const double &dt);
 
   void IntegrateGyr(const std::vector<sensor_msgs::Imu::ConstPtr> &v_imu);
@@ -88,7 +90,6 @@ class ImuProcess
   /// Making sure the equal size: v_imu_ and v_rot_
   std::deque<sensor_msgs::ImuConstPtr> v_imu_;
   std::vector<Eigen::Matrix3d> v_rot_pcl_;
-  std::vector<Pose6D> IMUpose;
 };
 
 ImuProcess::ImuProcess()
@@ -129,13 +130,12 @@ void ImuProcess::Reset()
   //gyr_int_.Reset(-1, nullptr);
   start_timestamp_ = -1;
   v_imu_.clear();
-  IMUpose.clear();
   fout.close();
 
 }
 
 
-void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, int &N)
+void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, process_noise_ikfom::DOF, input_ikfom, measurement_ikfom, measurement_ikfom::DOF> &kf_state, int &N)
 {
   /** 1. initializing the gravity, gyro bias, acc and gyro covariance
    ** 2. normalize the acceleration measurenments to unit gravity **/
@@ -174,26 +174,24 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
   init_state.bg  = mean_gyr;
   kf_state.change_x(init_state);
 
-  // esekfom::esekf<state_ikfom, 12, input_ikfom>::cov init_P = Eigen::Matrix<double, 23, 23>::Identity() * 0.001;
+  // esekfom::esekf<state_ikfom, process_noise_ikfom::DOF, input_ikfom, measurement_ikfom, measurement_ikfom::DOF>::cov init_P = Eigen::Matrix<double, 23, 23>::Identity() * 0.001;
   // kf_state.change_P(init_P);
 }
 
 
-void ImuProcess::ForwardPredict(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state)
+void ImuProcess::ForwardPredict(const MeasureGroup &meas, esekfom::esekf<state_ikfom, process_noise_ikfom::DOF, input_ikfom, measurement_ikfom, measurement_ikfom::DOF> &kf_state)
 {
   /*** add the imu of the last frame-tail to the of current frame-head ***/
   auto v_imu = meas.imu;
   v_imu.push_front(last_imu_);
-  const double &imu_beg_time = v_imu.front()->header.stamp.toSec(); 
-  const double &imu_end_time = v_imu.back()->header.stamp.toSec(); 
-  const double &pcl_beg_time = meas.lidar_beg_time;
-  
-
+  // const double &imu_beg_time = v_imu.front()->header.stamp.toSec(); 
+  // const double &imu_end_time = v_imu.back()->header.stamp.toSec(); 
+  const double &odom_time = meas.odom->header.stamp.toSec();
+  const double &last_o_time = meas.last_odom_time;
+  //* now the meas contains along the time line: imu_last, imu_1, imu_2, ..., imu_n, odom
   /*** Initialize IMU pose ***/
   state_ikfom imu_state = kf_state.get_x();
-  IMUpose.clear();
-  IMUpose.push_back(set_pose6d(imu_beg_time-pcl_beg_time, acc_s_last, angvel_last, imu_state.vel, imu_state.pos, imu_state.rot.toRotationMatrix()));
-  // esekfom::esekf<state_ikfom, 12, input_ikfom>::cov check_P = kf_state.get_P();
+  // esekfom::esekf<state_ikfom, process_noise_ikfom::DOF, input_ikfom, measurement_ikfom, measurement_ikfom::DOF>::cov check_P = kf_state.get_P();
 
   /*** forward propagation at each imu point ***/
   Eigen::Vector3d angvel_avr, acc_avr, acc_imu, vel_imu, pos_imu;
@@ -207,7 +205,7 @@ void ImuProcess::ForwardPredict(const MeasureGroup &meas, esekfom::esekf<state_i
     auto &&head = *(it_imu);
     auto &&tail = *(it_imu + 1);
     
-    if (tail->header.stamp.toSec() < pcl_beg_time)    continue; 
+    if (tail->header.stamp.toSec() < last_o_time)    continue; 
     
     angvel_avr<<0.5 * (head->angular_velocity.x + tail->angular_velocity.x),
                 0.5 * (head->angular_velocity.y + tail->angular_velocity.y),
@@ -216,11 +214,9 @@ void ImuProcess::ForwardPredict(const MeasureGroup &meas, esekfom::esekf<state_i
                 0.5 * (head->linear_acceleration.y + tail->linear_acceleration.y),
                 0.5 * (head->linear_acceleration.z + tail->linear_acceleration.z);
 
-    acc_avr     = acc_avr * G_m_s2; // / acc_avr.norm(); // mean_acc.norm(); // - state_inout.ba;
-
-    if(head->header.stamp.toSec() < pcl_beg_time) 
+    if(head->header.stamp.toSec() < last_o_time) 
     {
-      dt = tail->header.stamp.toSec() - pcl_beg_time; 
+      dt = tail->header.stamp.toSec() - last_o_time; 
     }
     else
     {
@@ -241,33 +237,23 @@ void ImuProcess::ForwardPredict(const MeasureGroup &meas, esekfom::esekf<state_i
     {
       acc_s_last[i] += imu_state.grav[i];
     }
-    double &&offs_t = tail->header.stamp.toSec() - pcl_beg_time; //- 1621800000  - 1621436000  - 1622378400
-    IMUpose.push_back(set_pose6d(offs_t, acc_s_last, angvel_last, imu_state.vel, imu_state.pos, imu_state.rot.toRotationMatrix()));
+    // double &&offs_t = tail->header.stamp.toSec() - last_o_time; 
   }
 
-  /*** calculated the pos and attitude prediction at the frame-end ***/
-  // double note = pcl_end_time > imu_end_time ? 1.0 : -1.0;
-  // dt = note * (pcl_end_time - imu_end_time);
-  // kf_state.predict(dt, Q, in);
-  
+  auto &&tail = v_imu.back();
+  dt = odom_time - tail->header.stamp.toSec();
+  kf_state.predict(dt, Q, in);
   imu_state = kf_state.get_x();
-  
-  #ifdef DEBUG_PRINT
-  esekfom::esekf<state_ikfom, 12, input_ikfom>::cov P = kf_state.get_P();
-    cout<<"[ IMU Process ]: vel "<<imu_state.vel.transpose()<<" pos "<<imu_state.pos.transpose()<<" ba"<<imu_state.ba.transpose()<<" bg "<<imu_state.bg.transpose()<<endl;
-    cout<<"propagated cov: "<<P.diagonal().transpose()<<endl;
-  #endif
 
 }
 
 
-void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state)
+void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, process_noise_ikfom::DOF, input_ikfom, measurement_ikfom, measurement_ikfom::DOF> &kf_state)
 {
-  double t1,t3;
-  t1 = omp_get_wtime();
+  auto t1 = std::chrono::high_resolution_clock::now();
 
   if(meas.imu.empty()) {return;};
-  ROS_ASSERT(meas.lidar != nullptr);
+  ROS_ASSERT(meas.odom != nullptr);
 
   if (imu_need_init_)
   {
@@ -287,7 +273,6 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
       ROS_INFO("IMU Initials: Gravity: %.4f %.4f %.4f %.4f; acc covarience: %.8f %.8f %.8f; gry covarience: %.8f %.8f %.8f",\
                imu_state.grav[0], imu_state.grav[1], imu_state.grav[2], mean_acc.norm(), cov_acc[0], cov_acc[1], cov_acc[2], cov_gyr[0], cov_gyr[1], cov_gyr[2]);
     }
-
     return;
   }
 
@@ -298,7 +283,6 @@ void ImuProcess::Process(const MeasureGroup &meas,  esekfom::esekf<state_ikfom, 
   /// Record last measurements
   last_imu_   = meas.imu.back();
 
-  t3 = omp_get_wtime();
-  
-  // cout<<"[ IMU Process ]: Time: "<<t3 - t1<<endl;
+  auto t3 = std::chrono::high_resolution_clock::now();
+  std::cout<<"[ IMU Process ]: Time: "<<std::chrono::duration_cast<std::chrono::microseconds>(t3 - t1).count() / 1000.0<<" ms"<<std::endl;
 }
