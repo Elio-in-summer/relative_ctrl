@@ -176,6 +176,13 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
 
   // esekfom::esekf<state_ikfom, process_noise_ikfom::DOF, input_ikfom, measurement_ikfom, measurement_ikfom::DOF>::cov init_P = Eigen::Matrix<double, 23, 23>::Identity() * 0.001;
   // kf_state.change_P(init_P);
+  if(double(N) / MAX_INI_COUNT > 0.99)
+  {
+    std::cout<<"cov acc"<<cov_acc.transpose()<<std::endl;
+    std::cout<<"cov gyr"<<cov_gyr.transpose()<<std::endl;
+    std::cout<<"init grav"<<init_state.grav<<std::endl;
+    std::cout<<"init bg"<<init_state.bg<<std::endl;
+  }
 }
 
 

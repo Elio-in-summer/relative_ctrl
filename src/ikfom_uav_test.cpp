@@ -30,6 +30,7 @@ void imu_cb(const sensor_msgs::Imu::ConstPtr &msg_in)
 {
     sensor_msgs::Imu::Ptr msg(new sensor_msgs::Imu(*msg_in));
     double timestamp = msg->header.stamp.toSec();
+    // std::cout << "imu_cb's timestamp: " << timestamp << std::endl;
 
     std::lock_guard<std::mutex> lock(mtx_buffer);
     if (timestamp < last_timestamp_imu)
@@ -44,7 +45,8 @@ void imu_cb(const sensor_msgs::Imu::ConstPtr &msg_in)
 }
 
 void odom_cb(const nav_msgs::Odometry::ConstPtr &msg_in)
-{
+{   
+    // std::cout << "odom_cb's timestamp: " << msg_in->header.stamp.toSec() << std::endl;
     std::lock_guard<std::mutex> lock(mtx_buffer);
     odom_buffer.push_back(msg_in);
     sig_buffer.notify_all();
@@ -53,6 +55,12 @@ void odom_cb(const nav_msgs::Odometry::ConstPtr &msg_in)
 bool sync_packages(MeasureGroup &meas)
 {
     std::lock_guard<std::mutex> lock(mtx_buffer);
+
+    // print imu_buffer's element's time
+    // for (auto imu : imu_buffer)
+    // {
+    //     std::cout << "imu_buffer's element's time: " << imu->header.stamp << std::endl;
+    // }
 
     if (odom_buffer.empty() || imu_buffer.empty()) {
         return false;
