@@ -46,9 +46,20 @@ void imu_cb(const sensor_msgs::Imu::ConstPtr &msg_in)
 
 void odom_cb(const nav_msgs::Odometry::ConstPtr &msg_in)
 {   
-    // std::cout << "odom_cb's timestamp: " << msg_in->header.stamp.toSec() << std::endl;
-    std::lock_guard<std::mutex> lock(mtx_buffer);
-    odom_buffer.push_back(msg_in);
+    static std::default_random_engine generator;
+    static std::uniform_real_distribution<double> distribution(0.0, 0.5);
+
+    nav_msgs::Odometry::Ptr msg_copy(new nav_msgs::Odometry(*msg_in));
+    
+    // 加噪声
+    msg_copy->pose.pose.position.x += distribution(generator);
+    msg_copy->pose.pose.position.y += distribution(generator);
+    msg_copy->pose.pose.position.z += distribution(generator);
+
+    {
+        std::lock_guard<std::mutex> lock(mtx_buffer);
+        odom_buffer.push_back(msg_copy);
+    }
     sig_buffer.notify_all();
 }
 
@@ -118,13 +129,13 @@ int main(int argc, char **argv)
 
         if (sync_packages(Measures))
         {   
-            std::cout << "\033[31mMeasurements synced\033[0m" << count << std::endl;
-            // print Measures data's timestamp     
-            for (auto imu : Measures.imu)
-            {
-                std::cout << "imu timestamps: " << imu->header.stamp << std::endl;
-            }
-            std::cout << "odom timestamp: " << Measures.odom->header.stamp << std::endl;
+            // std::cout << "\033[31mMeasurements synced\033[0m" << count << std::endl;
+            // // print Measures data's timestamp     
+            // for (auto imu : Measures.imu)
+            // {
+            //     std::cout << "imu timestamps: " << imu->header.stamp << std::endl;
+            // }
+            // std::cout << "odom timestamp: " << Measures.odom->header.stamp << std::endl;
             count++;
             p_imu.Process(Measures, kf);
             measurement_ikfom z;
@@ -132,7 +143,7 @@ int main(int argc, char **argv)
             z.rot_h = Eigen::Quaterniond(Measures.odom->pose.pose.orientation.w, Measures.odom->pose.pose.orientation.x, Measures.odom->pose.pose.orientation.y, Measures.odom->pose.pose.orientation.z).toRotationMatrix();
             Eigen::Matrix<double, measurement_ikfom::DOF, measurement_ikfom::DOF> R;
             R.setIdentity();
-            R *= 0.01; // measurement noise covariance
+            R *= 0.5; // measurement noise covariance
             kf.update_iterated(z, R);
 
             state_ikfom state_ekf = kf.get_x();
